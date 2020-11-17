@@ -6,6 +6,18 @@
 
 #include "DEBUG_UART/debug_uart.h"
 
+static void (*i2c1_tx_event_callback)(uint8_t message_id);
+
+void register_i2c_tx_event_callback(void (*callback)(uint8_t message_id)) {
+	i2c1_tx_event_callback = callback;
+}
+
+static void (*i2c1_rx_event_callback)(uint8_t message_id, uint8_t* data);
+
+void register_i2c_rx_event_callback(void (*callback)(uint8_t message_id, uint8_t* data)) {
+	i2c1_rx_event_callback = callback;
+}
+
 char debug_uart_framebuf[100];
 
 //just simple delay for demonstration
@@ -29,26 +41,38 @@ typedef struct I2C_Handler{
 	uint8_t slave_address;
 	uint8_t transmit;
 	uint8_t restart;
+	uint8_t message_id;
+	uint8_t tx_flag;
 }I2C_Handler;
 
 I2C_Handler I2C1_Handler;
 
-void I2C_write( uint8_t slave_address, uint8_t * data, uint8_t data_len){
+uint8_t I2C_write( uint8_t slave_address, uint8_t * data, uint8_t data_len){
 	I2C1_Handler.data = data;
 	I2C1_Handler.data_len = data_len;
 	I2C1_Handler.slave_address = slave_address;
 	I2C1_Handler.transmit = 1;
 	I2C1_Handler.restart = 0;
+	I2C1_Handler.data_pointer = 0;
+	I2C1_Handler.message_id++;
 	I2C1->CR1 |= I2C_CR1_START;
+	return I2C1_Handler.message_id;
 }
 
-void I2C_read( uint8_t slave_address, uint8_t reg_address, uint8_t data_len){
+uint8_t I2C_read( uint8_t slave_address, uint8_t reg_address, uint8_t data_len){
 	I2C1_Handler.data_len = data_len;
 	I2C1_Handler.slave_address = slave_address;
 	I2C1_Handler.reg_address = reg_address;
 	I2C1_Handler.transmit = 0;
 	I2C1_Handler.restart = 0;
+	I2C1_Handler.data_pointer = 0;
+	I2C1_Handler.message_id++;
 	I2C1->CR1 |= I2C_CR1_START;
+	return I2C1_Handler.message_id;
+}
+
+void i2c_tx_event( uint8_t message_id ){
+	Debug_log(debug_module_CORE,debug_type_IMPORTANT,"got it!",1);
 }
 
 int main(void){
@@ -110,6 +134,8 @@ int main(void){
 
 	I2C1->CR1 |= (I2C_CR1_PE);					//Peripheral enabled
 
+	register_i2c_tx_event_callback(i2c_tx_event);
+
 	debug_uart_init();
 	register_debug_uart_event_callback(debug_uart_str_event);
 	NVIC_EnableIRQ(USART1_IRQn);
@@ -118,8 +144,15 @@ int main(void){
 
 	while (1){
 
-		uint8_t asd[1] = {0xaa};
-		I2C_read(0x76, 0xD0,1);
+		if(I2C1_Handler.tx_flag){
+			if(i2c1_tx_event_callback != 0)i2c1_tx_event_callback(I2C1_Handler.tx_flag);
+			I2C1_Handler.tx_flag = 0;
+		}
+
+		uint8_t asd[3] = {0xF4, 0xaa,0x0f};
+		//I2C_read(0x76, 0xF7,6);
+		I2C_write(0x76, asd, 2);
+
 
 //		I2C1->CR1 |= I2C_CR1_START;
 //		while(!(I2C1->SR1 & I2C_SR1_SB));
@@ -164,11 +197,11 @@ int main(void){
 //		itoa(I2C1->DR, buf, 10);
 //		debug_uart_puts(buf);
 
-		char message[] = "green text";
-		Debug_log(debug_module_CORE,debug_type_IMPORTANT,message,1);
-		Debug_log(debug_module_CORE,debug_type_ERROR,message,1);
-		Debug_log(debug_module_CORE,debug_type_WARNING,message,1);
-		LoopDelay(1000000);
+//		char message[] = "green text";
+//		Debug_log(debug_module_CORE,debug_type_IMPORTANT,message,1);
+//		Debug_log(debug_module_CORE,debug_type_ERROR,message,1);
+//		Debug_log(debug_module_CORE,debug_type_WARNING,message,1);
+		LoopDelay(10000000);
 		DEBUG_UART_EVENT(debug_uart_framebuf);
 
 	}
@@ -199,29 +232,37 @@ void I2C1_EV_IRQHandler(void){
 		}
 
 		if(I2C1_Handler.data_len == 1 && !I2C1_Handler.transmit && I2C1_Handler.restart == 1){
+			I2C1->CR1 &= ~I2C_CR1_ACK;
 			I2C1->CR1 |= I2C_CR1_STOP;
 		}
 	}
 
-	if(I2C1_Handler.restart==1 &&(I2C1->SR1 & I2C_SR1_RXNE)){
-		if(I2C1->DR != 0x58){
+	if(I2C1_Handler.transmit==0 && I2C1_Handler.restart==1 &&(I2C1->SR1 & I2C_SR1_RXNE)){
+
+		I2C1_Handler.data_pointer++;
+
+		if(I2C1->DR != 0xaa){
 			GPIOC->BSRR |= GPIO_BSRR_BR8;
 		}else{
 			GPIOC->BSRR |= GPIO_BSRR_BS8;
 		}
+		if(I2C1_Handler.data_len-1 == I2C1_Handler.data_pointer && !I2C1_Handler.transmit){
+			I2C1->CR1 &= ~I2C_CR1_ACK;
+			I2C1->CR1 |= I2C_CR1_STOP;
+		}else{
+			I2C1->CR1 |= I2C_CR1_ACK;
+		}
 	}
 
-	if(I2C1->SR1 & I2C_SR1_BTF){
+	if(I2C1->SR1 & I2C_SR1_TXE){
 
-		if(I2C1_Handler.transmit){if(I2C1_Handler.data_pointer == I2C1_Handler.data_len)I2C1->CR1 |= I2C_CR1_STOP;
-		else{
+		if(I2C1_Handler.transmit){
+			if(I2C1_Handler.data_pointer == I2C1_Handler.data_len-1){
+				I2C1->CR1 |= I2C_CR1_STOP;
+				I2C1_Handler.tx_flag = 1;
+			}
 			I2C1_Handler.data_pointer++;
 			I2C1->DR = I2C1_Handler.data[I2C1_Handler.data_pointer];
-		}
-			//if(I2C1_Handler.data_pointer == I2C1_Handler.data_len)I2C1->CR1 |= I2C_CR1_STOP;
-			if(I2C1_Handler.data_pointer > I2C1_Handler.data_len){
-				I2C1_Handler.data_pointer = 0;
-			}
 		}else{
 			if(I2C1_Handler.restart==1){
 				I2C1->CR1 |= I2C_CR1_START;
