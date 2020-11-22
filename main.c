@@ -34,22 +34,58 @@ typedef struct I2C_Handler{
 	uint8_t rx_flag;
 	uint8_t error_flag;
 
-	uint8_t mode; //0=nothing 1=enumerate
+	uint8_t mode; //0=nothing 1=enumerate 2=write configuration
 	uint8_t enumeration_address;
 	uint8_t enumeration_start_address;
 	uint8_t enumeration_stop_address;
-	void (*i2c1_found_device_event_callback)(uint8_t slave_address);
+	void (*i2c1_enumerated_event_callback)();
 	uint8_t found_enumerated;
+
+	uint8_t now_handled_sensor;
+	uint8_t now_handled_register;
+	void (*i2c1_configured_event_callback)();
 
 }I2C_Handler;
 
 I2C_Handler I2C1_Handler;
 
-void I2C1_EnumerateDevices( uint8_t start_addr, uint8_t stop_addr, void (*callback)(uint8_t slave_address)){
+typedef struct T_I2C_SENSOR{
+	uint8_t responded;
+	uint8_t slave_address;
+	uint8_t D0_value;
+	uint8_t type;	//0-unknown 1-bmp280 2-bmp388 3-ina219
+	uint8_t write_configuration;
+	uint8_t configured;
+	uint16_t * configuration;
+	uint8_t configuration_len;
+	uint8_t is_16_bit;
+}T_I2C_SENSOR;
+
+T_I2C_SENSOR I2C1_sensors[5];
+
+//reg_addr,val
+uint16_t i2c_device_configuration_bmp288_0[] = {
+		0xF4, 0xFC,	//oversampling x16, sleep
+		0xF5, 0x08,	//filter x4, 0,5 stb time, no spi
+		0xF4, 0xFF	//oversampling x16, normal mode
+};
+
+void I2C1_EnumerateDevices( uint8_t start_addr, uint8_t stop_addr, void (*callback)){
 	I2C1_Handler.mode = 1;	//go to enumerate mode
 	I2C1_Handler.enumeration_start_address = start_addr;
 	I2C1_Handler.enumeration_stop_address = stop_addr;
-	I2C1_Handler.i2c1_found_device_event_callback = callback;
+	I2C1_Handler.i2c1_enumerated_event_callback = callback;
+}
+
+void I2C1_WriteConfgurationAdd( T_I2C_SENSOR * sensor, uint16_t * data , uint8_t reg_cnt){
+	sensor->write_configuration = 1;
+	sensor->configuration = data;
+	sensor->configuration_len = reg_cnt;
+}
+
+void I2C1_WriteConfguration(void (*callback)){
+	I2C1_Handler.mode = 2;
+	I2C1_Handler.i2c1_configured_event_callback = callback;
 }
 
 uint8_t I2C_write( uint8_t slave_address, uint8_t * data, uint8_t data_len){
@@ -77,9 +113,51 @@ uint8_t I2C_read( uint8_t slave_address, uint8_t reg_address, uint8_t data_len){
 	return I2C1_Handler.message_id;
 }
 
-void found_device(uint8_t slave_address){
-//	I2C_read(0x76, 0xD0, 2);
-//	GPIOC->ODR ^= GPIO_ODR_ODR8;
+void i2c_configurated(){
+	debug_uart_puts("sucessfully wrote data");
+}
+
+void i2c_enumerated(){
+
+	for(uint8_t i = 0; i<5; i++){
+		if(I2C1_sensors[i].responded == 1){
+			debug_uart_puts("found sensor: ");
+
+			if(I2C1_sensors[i].slave_address == 0x77 || I2C1_sensors[i].slave_address == 0x76){
+				if(I2C1_sensors[i].D0_value == 0x58) I2C1_sensors[i].type = 1;
+				else I2C1_sensors[i].type = 2;
+				I2C1_sensors[i].is_16_bit = 0;
+			}else if((I2C1_sensors[i].slave_address & 0xf0) == 0x40){
+				I2C1_sensors[i].type = 3;
+				I2C1_sensors[i].is_16_bit = 1;
+			}
+
+			if(I2C1_sensors[i].type == 1) debug_uart_puts("BMP280");
+			else if(I2C1_sensors[i].type == 2) debug_uart_puts("BMP388");
+			else if(I2C1_sensors[i].type == 3) debug_uart_puts("INA219");
+			debug_uart_puts(" on address: ");
+
+			char chr[5];
+			itoa(I2C1_sensors[i].slave_address,chr,16);
+			debug_uart_puts(chr);
+
+			debug_uart_puts("\r\n");
+
+			//I2C1_sensors[i].responded = 0;
+		}
+	}
+
+	for(uint8_t i = 0; i<5; i++){
+		if(I2C1_sensors[i].responded == 1 && I2C1_sensors[i].type == 1){
+
+			I2C1_WriteConfgurationAdd(&I2C1_sensors[i],i2c_device_configuration_bmp288_0,3);
+
+			break;
+		}
+	}
+
+	I2C1_WriteConfguration(i2c_configurated);
+
 }
 
 void I2c_init(){
@@ -172,7 +250,7 @@ int main(void){
 
 	while (1){
 
-		I2C1_EnumerateDevices(0x70, 0x78, found_device);
+		I2C1_EnumerateDevices(0x40, 0x78, i2c_enumerated);
 
 		//I2C_read(0x76,0xD0,1);
 
@@ -184,14 +262,6 @@ int main(void){
 
 uint8_t recieved_data[10];
 
-typedef struct T_I2C_SENSOR{
-	uint8_t responded;
-	uint8_t slave_address;
-	uint8_t type;	//0-unknown 1-bmp280 2-bmp388 3-ina219
-}T_I2C_SENSOR;
-
-T_I2C_SENSOR I2C1_sensors[5];
-
 void TIM6_IRQHandler(void){
 	TIM6->SR &= ~TIM_SR_UIF;
 
@@ -199,8 +269,12 @@ void TIM6_IRQHandler(void){
 
 	if(I2C1_Handler.mode == 1){	//if we are enumerating
 		if(old_mode != I2C1_Handler.mode){ //first time
+			for(uint8_t i = 0; i<5; i++){
+				I2C1_sensors[i].responded = 0;
+			}
 			I2C1_Handler.enumeration_address = I2C1_Handler.enumeration_start_address;
-			I2C_write(I2C1_Handler.enumeration_address, 0, 0);
+			I2C1_Handler.found_enumerated=0;
+			I2C_write(I2C1_Handler.enumeration_address, 0, 1);
 		}
 		if(I2C1_Handler.tx_flag || I2C1_Handler.error_flag){
 			if(I2C1_Handler.enumeration_address > I2C1_Handler.enumeration_stop_address){
@@ -208,43 +282,13 @@ void TIM6_IRQHandler(void){
 				I2C1_Handler.mode = 0;
 				I2C1->CR1 |= I2C_CR1_STOP;
 
-				for(uint8_t i = 0; i<5; i++){
-					if(I2C1_sensors[i].responded == 1){
-						debug_uart_puts("found sensor: ");
-						if(I2C1_sensors[i].type == 1) debug_uart_puts("BMP388");
-						debug_uart_puts(" on address: ");
-						char chr[5];
-						itoa(I2C1_sensors[i].slave_address,chr,16);
-						debug_uart_puts(chr);
-						debug_uart_puts("\r\n");
-						I2C1_Handler.found_enumerated=0;
-						I2C1_sensors[i].responded = 0;
-					}
-				}
+				if(I2C1_Handler.i2c1_enumerated_event_callback != 0) I2C1_Handler.i2c1_enumerated_event_callback();
 
 			}
 		}
 		if(I2C1_Handler.tx_flag){			//ack
 			I2C1_Handler.tx_flag = 0;
-
-			if(I2C1_Handler.enumeration_address == 0x76 || I2C1_Handler.enumeration_address == 0x77){
-				//bmp280 or bmp388
-				I2C_read(I2C1_Handler.enumeration_address, 0xD0, 1);
-			}else if((I2C1_Handler.enumeration_address & 0xf0) == 0x40){
-				//ina
-				I2C1_sensors[I2C1_Handler.found_enumerated].responded = 1;
-				I2C1_sensors[I2C1_Handler.found_enumerated].slave_address = I2C1_Handler.enumeration_address;
-				I2C1_sensors[I2C1_Handler.found_enumerated].type = 3;
-				I2C1_Handler.found_enumerated++;
-
-				I2C1_Handler.enumeration_address++;
-				uint8_t data[2] = {0xF4, 0xaa};
-				I2C_write(I2C1_Handler.enumeration_address, data, 1);
-			}else{
-				I2C1_Handler.enumeration_address++;
-				uint8_t data[2] = {0xF4, 0xaa};
-				I2C_write(I2C1_Handler.enumeration_address, data, 1);
-			}
+			I2C_read(I2C1_Handler.enumeration_address, 0xD0, 1);
 		}
 		if(I2C1_Handler.error_flag){		//nack
 			I2C1_Handler.enumeration_address++;
@@ -257,15 +301,100 @@ void TIM6_IRQHandler(void){
 
 			I2C1_sensors[I2C1_Handler.found_enumerated].responded = 1;
 			I2C1_sensors[I2C1_Handler.found_enumerated].slave_address = I2C1_Handler.enumeration_address;
-			if(I2C1_Handler.data[0] == 0x58)I2C1_sensors[I2C1_Handler.found_enumerated].type = 1;
-			else I2C1_sensors[I2C1_Handler.found_enumerated].type = 2;
+			I2C1_sensors[I2C1_Handler.found_enumerated].D0_value = I2C1_Handler.data[0];
 			I2C1_Handler.found_enumerated++;
+
 			uint8_t data[2] = {0xF4, 0xaa};
 			I2C1_Handler.enumeration_address++;
 			I2C_write(I2C1_Handler.enumeration_address, data, 1);
 
 		}
 	}
+
+	if(I2C1_Handler.mode == 2){
+		if(old_mode != I2C1_Handler.mode){ //first time
+
+			I2C1_Handler.now_handled_sensor = 0;
+			I2C1_Handler.now_handled_register = 0;
+
+			static uint8_t found;
+			for(uint8_t i=I2C1_Handler.now_handled_sensor; i<5; i++){
+				if(I2C1_sensors[i].write_configuration == 1){
+					I2C1_Handler.now_handled_sensor = i;
+					found = 1;
+					break;
+				}
+			}
+
+			if(!found){
+				I2C1_Handler.mode = 0;
+				I2C1_Handler.now_handled_register = 0;
+				I2C1_Handler.now_handled_sensor = 0;
+			}
+
+			if(I2C1_sensors[I2C1_Handler.now_handled_sensor].write_configuration == 1){
+
+				I2C1_Handler.data[0] = I2C1_sensors[I2C1_Handler.now_handled_sensor].configuration[I2C1_Handler.now_handled_register*2];
+				if(I2C1_sensors[I2C1_Handler.now_handled_sensor].is_16_bit == 1){
+					I2C1_Handler.data[1] = I2C1_sensors[I2C1_Handler.now_handled_sensor].configuration[(I2C1_Handler.now_handled_register*2)+1]>>8;
+					I2C1_Handler.data[2] = (uint8_t)I2C1_sensors[I2C1_Handler.now_handled_sensor].configuration[(I2C1_Handler.now_handled_register*2)+1];
+					I2C_write(I2C1_sensors[I2C1_Handler.now_handled_sensor].slave_address, I2C1_Handler.data,3);
+				}else{
+					I2C1_Handler.data[1] = I2C1_sensors[I2C1_Handler.now_handled_sensor].configuration[(I2C1_Handler.now_handled_register*2)+1];
+					I2C_write(I2C1_sensors[I2C1_Handler.now_handled_sensor].slave_address, I2C1_Handler.data,2);
+				}
+
+			}
+		}
+
+		if(I2C1_Handler.tx_flag){			//ack
+			I2C1_Handler.tx_flag = 0;
+			if(I2C1_sensors[I2C1_Handler.now_handled_sensor].configuration_len-1 == I2C1_Handler.now_handled_register){
+				//sent all regs for this sensor
+				I2C1_sensors[I2C1_Handler.now_handled_sensor].write_configuration = 0;
+
+				static uint8_t found;
+				for(uint8_t i=I2C1_Handler.now_handled_sensor; i<5; i++){
+					if(I2C1_sensors[I2C1_Handler.now_handled_sensor].write_configuration == 1){
+						I2C1_Handler.now_handled_sensor = i;
+						found = 1;
+						break;
+					}
+				}
+				if(!found){
+					if(I2C1_Handler.i2c1_configured_event_callback != 0) I2C1_Handler.i2c1_configured_event_callback();
+					I2C1_Handler.mode = 0;
+					I2C1_Handler.now_handled_register = 0;
+					I2C1_Handler.now_handled_sensor = 0;
+				}
+			}else{
+				I2C1_Handler.now_handled_register++;
+			}
+
+			if(I2C1_sensors[I2C1_Handler.now_handled_sensor].write_configuration == 1){
+				I2C1_Handler.data[0] = I2C1_sensors[I2C1_Handler.now_handled_sensor].configuration[(I2C1_Handler.now_handled_register*2)];
+				if(I2C1_sensors[I2C1_Handler.now_handled_sensor].type == 3){//16 bit access
+					I2C1_Handler.data[1] = I2C1_sensors[I2C1_Handler.now_handled_sensor].configuration[(I2C1_Handler.now_handled_register*2)+1]>>8;
+				}else{
+					I2C1_Handler.data[1] = I2C1_sensors[I2C1_Handler.now_handled_sensor].configuration[(I2C1_Handler.now_handled_register*2)+1];
+				}
+
+				if(I2C1_sensors[I2C1_Handler.now_handled_sensor].is_16_bit == 1){
+					I2C1_Handler.data[1] = I2C1_sensors[I2C1_Handler.now_handled_sensor].configuration[(I2C1_Handler.now_handled_register*2)+1]>>8;
+					I2C1_Handler.data[2] = (uint8_t)I2C1_sensors[I2C1_Handler.now_handled_sensor].configuration[(I2C1_Handler.now_handled_register*2)+1];
+					I2C_write(I2C1_sensors[I2C1_Handler.now_handled_sensor].slave_address, I2C1_Handler.data,3);
+				}else{
+					I2C1_Handler.data[1] = I2C1_sensors[I2C1_Handler.now_handled_sensor].configuration[(I2C1_Handler.now_handled_register*2)+1];
+					I2C_write(I2C1_sensors[I2C1_Handler.now_handled_sensor].slave_address, I2C1_Handler.data,2);
+				}
+			}
+		}
+		if(I2C1_Handler.error_flag){		//nack
+			debug_uart_puts("error during sending!!! \r\n");
+		}
+
+	}
+
 	old_mode = I2C1_Handler.mode;
 
 }
@@ -299,7 +428,7 @@ void I2C1_ER_IRQHandler(void){
 		I2c_init();
 	}
 	I2C1_Handler.error_flag = 1;
-	debug_uart_puts("er");
+	if(I2C1_Handler.mode != 1 )debug_uart_puts("err");
 }
 
 void I2C1_EV_IRQHandler(void){
@@ -348,12 +477,16 @@ void I2C1_EV_IRQHandler(void){
 	if(I2C1->SR1 & I2C_SR1_TXE){
 
 		if(I2C1_Handler.transmit){
-			if(I2C1_Handler.data_pointer == I2C1_Handler.data_len-1){
-				I2C1->CR1 |= I2C_CR1_STOP;
+			if(I2C1_Handler.data_pointer > I2C1_Handler.data_len-1){
 				I2C1_Handler.tx_flag = 1;
 			}
-			I2C1_Handler.data_pointer++;
-			I2C1->DR = I2C1_Handler.data[I2C1_Handler.data_pointer];
+			if(I2C1_Handler.data_pointer <= I2C1_Handler.data_len-1){
+				if(I2C1_Handler.data_pointer == I2C1_Handler.data_len-1){
+					I2C1->CR1 |= I2C_CR1_STOP;
+				}
+				I2C1_Handler.data_pointer++;
+				I2C1->DR = I2C1_Handler.data[I2C1_Handler.data_pointer];
+			}
 		}else{
 			if(I2C1_Handler.restart==1){
 				I2C1->CR1 |= I2C_CR1_START;
