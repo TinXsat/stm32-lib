@@ -18,36 +18,7 @@ void debug_uart_str_event(char * str){
 	debug_uart_puts("\r\n");
 }
 
-uint8_t buf[5];
-uint8_t event_flag;
-
-typedef struct I2C_Handler{
-	uint8_t* data;
-	uint8_t data_len;
-	uint8_t data_pointer;
-	uint8_t reg_address;
-	uint8_t slave_address;
-	uint8_t transmit;
-	uint8_t restart;
-	uint8_t message_id;
-	uint8_t tx_flag;
-	uint8_t rx_flag;
-	uint8_t error_flag;
-
-	uint8_t mode; //0=nothing 1=enumerate 2=write configuration
-	uint8_t enumeration_address;
-	uint8_t enumeration_start_address;
-	uint8_t enumeration_stop_address;
-	void (*i2c1_enumerated_event_callback)();
-	uint8_t found_enumerated;
-
-	uint8_t now_handled_sensor;
-	uint8_t now_handled_register;
-	void (*i2c1_configured_event_callback)();
-
-}I2C_Handler;
-
-I2C_Handler I2C1_Handler;
+uint8_t buf[10];
 
 typedef struct T_I2C_SENSOR{
 	uint8_t responded;
@@ -62,6 +33,41 @@ typedef struct T_I2C_SENSOR{
 }T_I2C_SENSOR;
 
 T_I2C_SENSOR I2C1_sensors[5];
+
+typedef struct I2C_Handler{
+	uint8_t* data;
+	uint8_t data_len;
+	uint8_t data_pointer;
+	uint8_t reg_address;
+	uint8_t slave_address;
+	uint8_t transmit;
+	uint8_t restart;
+
+	uint8_t message_id; //remove
+
+	uint8_t tx_flag;
+	uint8_t rx_flag;
+	uint8_t error_flag;
+
+	uint8_t mode; //0=nothing 1=enumerate 2=write configuration
+
+	uint8_t enumeration_address;
+	uint8_t enumeration_start_address;
+	uint8_t enumeration_stop_address;
+	void (*i2c1_enumerated_event_callback)();
+	uint8_t found_enumerated;
+
+	uint8_t now_handled_sensor;
+	uint8_t now_handled_register;
+	void (*i2c1_configured_event_callback)();
+
+	uint8_t read_start_reg;
+	uint8_t read_cnt_reg;
+	void (*i2c1_read_event_callback)(T_I2C_SENSOR* sensor, uint8_t * data);
+
+}I2C_Handler;
+
+I2C_Handler I2C1_Handler;
 
 //reg_addr,val
 uint16_t i2c_device_configuration_bmp288_0[] = {
@@ -151,8 +157,8 @@ void i2c_enumerated(){
 		if(I2C1_sensors[i].responded == 1 && I2C1_sensors[i].type == 1){
 
 			I2C1_WriteConfgurationAdd(&I2C1_sensors[i],i2c_device_configuration_bmp288_0,3);
+			debug_uart_puts("added");
 
-			break;
 		}
 	}
 
@@ -355,12 +361,14 @@ void TIM6_IRQHandler(void){
 
 				static uint8_t found;
 				for(uint8_t i=I2C1_Handler.now_handled_sensor; i<5; i++){
-					if(I2C1_sensors[I2C1_Handler.now_handled_sensor].write_configuration == 1){
+					if(I2C1_sensors[i].write_configuration == 1){
 						I2C1_Handler.now_handled_sensor = i;
+						I2C1_Handler.now_handled_register = 0;
 						found = 1;
 						break;
 					}
 				}
+
 				if(!found){
 					if(I2C1_Handler.i2c1_configured_event_callback != 0) I2C1_Handler.i2c1_configured_event_callback();
 					I2C1_Handler.mode = 0;
