@@ -136,20 +136,17 @@ uint8_t I2C_read( uint8_t slave_address, uint8_t reg_address, uint8_t data_len){
 void i2c_read(){
 	debug_uart_puts("sucessfully read data\r\n");
 
-	//uint32_t uncomp_press = (int32_t) ((((uint32_t) (I2C1_Handler.data[0])) << 12) | (((uint32_t) (I2C1_Handler.data[1])) << 4) | ((uint32_t) I2C1_Handler.data[2] >> 4));
-	//uint32_t uncomp_temp = (int32_t) ((((int32_t) (I2C1_Handler.data[3])) << 12) | (((int32_t) (I2C1_Handler.data[4])) << 4) | (((int32_t) (I2C1_Handler.data[5])) >> 4));
-
 	char str[10];
-	itoa(I2C1_Handler.data[4], str,16);
+	itoa(I2C1_Handler.data[0], str,16);
 	debug_uart_puts(str);
 }
 
 void i2c_configurated(){
 	debug_uart_puts("sucessfully wrote data\r\n");
 	for(uint8_t i = 0; i<5; i++){
-		if(I2C1_sensors[i].responded == 1 && I2C1_sensors[i].type == 1){
+		if(I2C1_sensors[i].responded == 1 && I2C1_sensors[i].type == 3){
 
-			I2C1_ReadSensorAdd(&I2C1_sensors[i],0xF7,6);
+			I2C1_ReadSensorAdd(&I2C1_sensors[i],0x00,1);
 			break;
 		}
 	}
@@ -439,8 +436,9 @@ void TIM6_IRQHandler(void){
 	}
 
 	if(I2C1_Handler.mode == 3){
-		if(old_mode != I2C1_Handler.mode){ //first time
+		static uint16_t aux16data[10];
 
+		if(old_mode != I2C1_Handler.mode){ //first time
 			I2C1_Handler.now_handled_sensor = 0;
 			I2C1_Handler.now_handled_register = 0;
 
@@ -460,17 +458,32 @@ void TIM6_IRQHandler(void){
 			}
 
 			if(I2C1_sensors[I2C1_Handler.now_handled_sensor].read_data == 1){
+				if(I2C1_sensors[I2C1_Handler.now_handled_sensor].is_16_bit == 1){
+					I2C_read(I2C1_sensors[I2C1_Handler.now_handled_sensor].slave_address, I2C1_sensors[I2C1_Handler.now_handled_sensor].read_start_reg, 2);
+				}else{
+					I2C_read(I2C1_sensors[I2C1_Handler.now_handled_sensor].slave_address, I2C1_sensors[I2C1_Handler.now_handled_sensor].read_start_reg, I2C1_sensors[I2C1_Handler.now_handled_sensor].read_cnt_reg);
+				}
+			}
+		}
 
-				//8bit
-				I2C_read(I2C1_sensors[I2C1_Handler.now_handled_sensor].slave_address, I2C1_sensors[I2C1_Handler.now_handled_sensor].read_start_reg, I2C1_sensors[I2C1_Handler.now_handled_sensor].read_cnt_reg);
+		if(I2C1_Handler.rx_flag){			//ack
+			I2C1_Handler.rx_flag = 0;
+			if(I2C1_sensors[I2C1_Handler.now_handled_sensor].is_16_bit == 1){
+				aux16data[I2C1_Handler.now_handled_register] = (I2C1_Handler.data[0]<<8) + I2C1_Handler.data[1];
+				if(I2C1_sensors[I2C1_Handler.now_handled_sensor].read_cnt_reg-1 == I2C1_Handler.now_handled_register){
+					memcpy(I2C1_Handler.data,aux16data,I2C1_Handler.now_handled_register+1);
+					if(I2C1_Handler.i2c1_read_event_callback != 0) I2C1_Handler.i2c1_read_event_callback(&I2C1_sensors[I2C1_Handler.now_handled_sensor],I2C1_Handler.data);
+				}else{
+					I2C1_Handler.now_handled_register++;
+					I2C_read(I2C1_sensors[I2C1_Handler.now_handled_sensor].slave_address,I2C1_sensors[I2C1_Handler.now_handled_sensor].read_start_reg+I2C1_Handler.now_handled_register, 2);
+				}
+			}else{
+				I2C1_Handler.mode = 0;
+				if(I2C1_Handler.i2c1_read_event_callback != 0) I2C1_Handler.i2c1_read_event_callback(&I2C1_sensors[I2C1_Handler.now_handled_sensor],I2C1_Handler.data);
 
 			}
 		}
-		if(I2C1_Handler.rx_flag){			//ack
-			I2C1_Handler.rx_flag = 0;
-			I2C1_Handler.mode = 0;
-			if(I2C1_Handler.i2c1_read_event_callback != 0) I2C1_Handler.i2c1_read_event_callback(&I2C1_sensors[I2C1_Handler.now_handled_sensor],I2C1_Handler.data);
-		}
+
 		if(I2C1_Handler.tx_flag){			//ack
 			I2C1_Handler.tx_flag = 0;
 		}
@@ -553,9 +566,10 @@ void I2C1_EV_IRQHandler(void){
 		I2C1_Handler.data[I2C1_Handler.data_pointer]= I2C1->DR;
 		I2C1_Handler.data_pointer++;
 
-		if(I2C1_Handler.data_len == I2C1_Handler.data_pointer && !I2C1_Handler.transmit){
+		if(I2C1_Handler.data_len-1 == I2C1_Handler.data_pointer){
 			I2C1->CR1 &= ~I2C_CR1_ACK;
 			I2C1->CR1 |= I2C_CR1_STOP;
+		}if(I2C1_Handler.data_len == I2C1_Handler.data_pointer){
 			I2C1_Handler.rx_flag = 1;
 		}else{
 			I2C1->CR1 |= I2C_CR1_ACK;
