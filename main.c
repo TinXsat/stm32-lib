@@ -471,7 +471,10 @@ void TIM6_IRQHandler(void){
 			if(I2C1_sensors[I2C1_Handler.now_handled_sensor].is_16_bit == 1){
 				aux16data[I2C1_Handler.now_handled_register] = (I2C1_Handler.data[0]<<8) + I2C1_Handler.data[1];
 				if(I2C1_sensors[I2C1_Handler.now_handled_sensor].read_cnt_reg-1 == I2C1_Handler.now_handled_register){
-					memcpy(I2C1_Handler.data,aux16data,I2C1_Handler.now_handled_register+1);
+					for(uint8_t i = 0; i<I2C1_Handler.now_handled_register+1; i++){
+						I2C1_Handler.data[i] = aux16data[i];
+					}
+					//memcpy(&I2C1_Handler.data[0],&aux16data[0],I2C1_Handler.now_handled_register+1);
 					if(I2C1_Handler.i2c1_read_event_callback != 0) I2C1_Handler.i2c1_read_event_callback(&I2C1_sensors[I2C1_Handler.now_handled_sensor],I2C1_Handler.data);
 				}else{
 					I2C1_Handler.now_handled_register++;
