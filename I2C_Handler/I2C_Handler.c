@@ -232,6 +232,7 @@ void I2C_Handler_Main(T_I2C_HANDLER* I2C_Handler){
 
 			if(I2C_Handler->devices[I2C_Handler->now_handled_device].is_16_bit == 0){
 				//8bit so go to next sensor
+				I2C_Handler->devices[I2C_Handler->now_handled_device].read_data = 0;
 				if(I2C_Handler->i2c1_read_event_callback != 0) I2C_Handler->i2c1_read_event_callback(&I2C_Handler->devices[I2C_Handler->now_handled_device],I2C_Handler->data);
 
 				uint8_t found = 0;
@@ -265,10 +266,11 @@ void I2C_Handler_Main(T_I2C_HANDLER* I2C_Handler){
 					for(uint8_t i = 0; i<I2C_Handler->now_handled_register+1; i++){
 						I2C_Handler->data[i] = aux16data[i];
 					}
+					I2C_Handler->devices[I2C_Handler->now_handled_device].read_data = 0;
 					if(I2C_Handler->i2c1_read_event_callback != 0) I2C_Handler->i2c1_read_event_callback(&I2C_Handler->devices[I2C_Handler->now_handled_device],I2C_Handler->data);
 
 					uint8_t found = 0;
-					for(uint8_t i=I2C_Handler->now_handled_device+1; i<5; i++){
+					for(uint8_t i=I2C_Handler->now_handled_device; i<5; i++){
 						if(I2C_Handler->devices[i].read_data == 1){
 							I2C_Handler->now_handled_device = i;
 							found = 1;
