@@ -133,12 +133,16 @@ uint8_t I2C_read( uint8_t slave_address, uint8_t reg_address, uint8_t data_len){
 	return I2C1_Handler.message_id;
 }
 
+uint8_t be;
+
 void i2c_read(){
+
 	debug_uart_puts("sucessfully read data\r\n");
 
 	char str[10];
 	itoa(I2C1_Handler.data[0], str,16);
 	debug_uart_puts(str);
+
 }
 
 void i2c_configurated(){
@@ -150,6 +154,16 @@ void i2c_configurated(){
 			break;
 		}
 	}
+
+	for(uint8_t i = 0; i<5; i++){
+		if(I2C1_sensors[i].responded == 1 && I2C1_sensors[i].type == 1){
+
+			I2C1_ReadSensorAdd(&I2C1_sensors[i],0xD0,1);
+			break;
+		}
+	}
+
+	be = 0;
 
 	I2C1_ReadSensor(i2c_read);
 }
@@ -468,22 +482,71 @@ void TIM6_IRQHandler(void){
 
 		if(I2C1_Handler.rx_flag){			//ack
 			I2C1_Handler.rx_flag = 0;
-			if(I2C1_sensors[I2C1_Handler.now_handled_sensor].is_16_bit == 1){
+
+			if(I2C1_sensors[I2C1_Handler.now_handled_sensor].is_16_bit == 0){
+				//8bit so go to next sensor
+				if(I2C1_Handler.i2c1_read_event_callback != 0) I2C1_Handler.i2c1_read_event_callback(&I2C1_sensors[I2C1_Handler.now_handled_sensor],I2C1_Handler.data);
+
+				uint8_t found = 0;
+				for(uint8_t i=I2C1_Handler.now_handled_sensor+1; i<5; i++){
+					if(I2C1_sensors[i].read_data == 1){
+						I2C1_Handler.now_handled_sensor = i;
+						found = 1;
+						break;
+					}
+				}
+
+				if(!found){
+					I2C1_Handler.mode = 0;
+					I2C1_Handler.now_handled_register = 0;
+					I2C1_Handler.now_handled_sensor = 0;
+				}else{
+					if(I2C1_sensors[I2C1_Handler.now_handled_sensor].read_data == 1){
+						if(I2C1_sensors[I2C1_Handler.now_handled_sensor].is_16_bit == 1){
+							I2C_read(I2C1_sensors[I2C1_Handler.now_handled_sensor].slave_address, I2C1_sensors[I2C1_Handler.now_handled_sensor].read_start_reg, 2);
+						}else{
+							I2C_read(I2C1_sensors[I2C1_Handler.now_handled_sensor].slave_address, I2C1_sensors[I2C1_Handler.now_handled_sensor].read_start_reg, I2C1_sensors[I2C1_Handler.now_handled_sensor].read_cnt_reg);
+						}
+					}
+				}
+			}else{
+				//16bit go to next register
 				aux16data[I2C1_Handler.now_handled_register] = (I2C1_Handler.data[0]<<8) + I2C1_Handler.data[1];
+
 				if(I2C1_sensors[I2C1_Handler.now_handled_sensor].read_cnt_reg-1 == I2C1_Handler.now_handled_register){
+
 					for(uint8_t i = 0; i<I2C1_Handler.now_handled_register+1; i++){
 						I2C1_Handler.data[i] = aux16data[i];
 					}
-					//memcpy(&I2C1_Handler.data[0],&aux16data[0],I2C1_Handler.now_handled_register+1);
 					if(I2C1_Handler.i2c1_read_event_callback != 0) I2C1_Handler.i2c1_read_event_callback(&I2C1_sensors[I2C1_Handler.now_handled_sensor],I2C1_Handler.data);
+
+					uint8_t found = 0;
+					for(uint8_t i=I2C1_Handler.now_handled_sensor+1; i<5; i++){
+						if(I2C1_sensors[i].read_data == 1){
+							I2C1_Handler.now_handled_sensor = i;
+							found = 1;
+							break;
+						}
+					}
+
+					if(!found){
+						I2C1_Handler.mode = 0;
+						I2C1_Handler.now_handled_register = 0;
+						I2C1_Handler.now_handled_sensor = 0;
+					}else{
+						if(I2C1_sensors[I2C1_Handler.now_handled_sensor].read_data == 1){
+							if(I2C1_sensors[I2C1_Handler.now_handled_sensor].is_16_bit == 1){
+								I2C_read(I2C1_sensors[I2C1_Handler.now_handled_sensor].slave_address, I2C1_sensors[I2C1_Handler.now_handled_sensor].read_start_reg, 2);
+							}else{
+								I2C_read(I2C1_sensors[I2C1_Handler.now_handled_sensor].slave_address, I2C1_sensors[I2C1_Handler.now_handled_sensor].read_start_reg, I2C1_sensors[I2C1_Handler.now_handled_sensor].read_cnt_reg);
+							}
+						}
+					}
+
 				}else{
 					I2C1_Handler.now_handled_register++;
 					I2C_read(I2C1_sensors[I2C1_Handler.now_handled_sensor].slave_address,I2C1_sensors[I2C1_Handler.now_handled_sensor].read_start_reg+I2C1_Handler.now_handled_register, 2);
 				}
-			}else{
-				I2C1_Handler.mode = 0;
-				if(I2C1_Handler.i2c1_read_event_callback != 0) I2C1_Handler.i2c1_read_event_callback(&I2C1_sensors[I2C1_Handler.now_handled_sensor],I2C1_Handler.data);
-
 			}
 		}
 
