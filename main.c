@@ -48,6 +48,7 @@ void i2c_configurated(){
 		if(I2C1_sensors[i].responded == 1 && I2C1_sensors[i].type == 3){
 
 			I2C_ReadSensorAdd(&I2C1_sensors[i],0x00,1);
+			debug_uart_puts("added ina219\r\n");
 			break;
 		}
 	}
@@ -56,6 +57,7 @@ void i2c_configurated(){
 		if(I2C1_sensors[i].responded == 1 && I2C1_sensors[i].type == 1){
 
 			I2C_ReadSensorAdd(&I2C1_sensors[i],0xD0,1);
+			debug_uart_puts("added bmp280\r\n");
 			break;
 		}
 	}
@@ -186,7 +188,7 @@ int main(void){
 
 	TIM6->CR1 |= TIM_CR1_CEN;
 
-	I2C_Handler_init(&I2C1_Handler, I2C1_sensors, buf);
+	I2C_Handler_init(&I2C1_Handler, I2C1_sensors, I2C1, buf);
 
 	debug_uart_init();
 	register_debug_uart_event_callback(debug_uart_str_event);
@@ -226,68 +228,5 @@ void I2C1_ER_IRQHandler(void){
 
 void I2C1_EV_IRQHandler(void){
 
-	if(I2C1->SR1 & I2C_SR1_SB){
-		if(!I2C1_Handler.restart) I2C1->DR = I2C1_Handler.slave_address<<1;
-		else I2C1->DR = (I2C1_Handler.slave_address<<1) + 1;
-	}
-
-	if(I2C1->SR1 & I2C_SR1_ADDR){
-		uint32_t asd = I2C1->SR2;
-		if(I2C1_Handler.transmit){
-			if(I2C1_Handler.data_pointer == I2C1_Handler.data_len-1){
-				I2C1->CR1 |= I2C_CR1_STOP;
-				I2C1_Handler.tx_flag = 1;
-			}
-			I2C1->DR = I2C1_Handler.data[0];
-		}else{
-
-			if(I2C1_Handler.data_len == 1 && I2C1_Handler.restart == 1){
-				I2C1->CR1 &= ~I2C_CR1_ACK;
-				I2C1->CR1 |= I2C_CR1_STOP;
-			}else{
-				I2C1->CR1 |= I2C_CR1_ACK;
-			}
-
-			if(!I2C1_Handler.restart){
-				I2C1->DR = I2C1_Handler.reg_address;
-				I2C1_Handler.restart = 1;
-			}
-		}
-	}
-
-	if(I2C1_Handler.transmit==0 && I2C1_Handler.restart==1 &&(I2C1->SR1 & I2C_SR1_RXNE)){
-
-		I2C1_Handler.data[I2C1_Handler.data_pointer]= I2C1->DR;
-		I2C1_Handler.data_pointer++;
-
-		if(I2C1_Handler.data_len-1 == I2C1_Handler.data_pointer){
-			I2C1->CR1 &= ~I2C_CR1_ACK;
-			I2C1->CR1 |= I2C_CR1_STOP;
-		}if(I2C1_Handler.data_len == I2C1_Handler.data_pointer){
-			I2C1_Handler.rx_flag = 1;
-		}else{
-			I2C1->CR1 |= I2C_CR1_ACK;
-		}
-	}
-
-	if(I2C1->SR1 & I2C_SR1_TXE){
-
-		if(I2C1_Handler.transmit){
-			if(I2C1_Handler.data_pointer > I2C1_Handler.data_len-1){
-				I2C1_Handler.tx_flag = 1;
-			}
-			if(I2C1_Handler.data_pointer <= I2C1_Handler.data_len-1){
-				if(I2C1_Handler.data_pointer == I2C1_Handler.data_len-1){
-					I2C1->CR1 |= I2C_CR1_STOP;
-				}
-				I2C1_Handler.data_pointer++;
-				I2C1->DR = I2C1_Handler.data[I2C1_Handler.data_pointer];
-			}
-		}else{
-			if(I2C1_Handler.restart==1){
-				I2C1->CR1 |= I2C_CR1_START;
-			}
-		}
-	}
-
+	I2C_Handler_EVIRQ( &I2C1_Handler );
 }

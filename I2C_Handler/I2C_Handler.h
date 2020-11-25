@@ -36,6 +36,7 @@ typedef struct T_I2C_HANDLER{
 	uint8_t mode; //0=nothing 1=enumerate 2=write configuration
 
 	T_I2C_DEVICE* devices;
+	I2C_TypeDef* I2C_periph;
 
 	//variables used to enumerate devices
 	uint8_t enumeration_address;
@@ -53,11 +54,9 @@ typedef struct T_I2C_HANDLER{
 	uint8_t read_cnt_reg;
 	void (*i2c1_read_event_callback)(T_I2C_DEVICE* device, uint16_t * data);
 
-	I2C_TypeDef I2C_periph;
-
 }T_I2C_HANDLER;
 
-void I2C_Handler_init(T_I2C_HANDLER* I2C_Handler, T_I2C_DEVICE* devices_t, uint16_t* buf);
+void I2C_Handler_init(T_I2C_HANDLER* I2C_Handler, T_I2C_DEVICE* devices_t, I2C_TypeDef* I2C_periph_t, uint16_t* buf);
 void I2C_EnumerateDevices(T_I2C_HANDLER* I2C_Handler, uint8_t start_addr, uint8_t stop_addr, void (*callback)(T_I2C_HANDLER* i2c_handler));
 void I2C_WriteConfgurationAdd(T_I2C_DEVICE * device, uint16_t * data , uint8_t reg_cnt);
 void I2C_WriteConfguration(T_I2C_HANDLER* I2C_Handler, void (*callback)(T_I2C_HANDLER* i2c_handler));
@@ -66,5 +65,6 @@ void I2C_ReadSensor(T_I2C_HANDLER* I2C_Handler, void (*callback)(T_I2C_DEVICE* d
 
 void I2C_Handler_Main(T_I2C_HANDLER* I2C_Handler);
 void I2C_Handler_ERIRQ( T_I2C_HANDLER* I2C_Handler);
+void I2C_Handler_EVIRQ( T_I2C_HANDLER* I2C_Handler);
 
 #endif /* I2C_HANDLER_I2C_HANDLER_H_ */
