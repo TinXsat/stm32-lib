@@ -8,7 +8,7 @@
 
 void I2C_Handler_init(T_I2C_HANDLER* I2C_Handler, T_I2C_DEVICE* devices_t, I2C_TypeDef* I2C_periph_t, uint16_t* buf){
 	I2C_Handler->devices = devices_t;
-	I2C_Handler->data = buf;
+	//I2C_Handler->data = buf;
 	I2C_Handler->I2C_periph = I2C_periph_t;
 }
 
@@ -42,13 +42,13 @@ void I2C_ReadSensor(T_I2C_HANDLER* I2C_Handler, void (*callback)(T_I2C_DEVICE* d
 }
 
 void I2C_write(T_I2C_HANDLER* I2C_Handler, uint8_t slave_address, uint16_t * data, uint8_t data_len){
-	I2C_Handler->data = data;
+//	I2C_Handler->data = data[0];
 	I2C_Handler->data_len = data_len;
 	I2C_Handler->slave_address = slave_address;
 	I2C_Handler->transmit = 1;
 	I2C_Handler->restart = 0;
 	I2C_Handler->data_pointer = 0;
-	I2C1->CR1 |= I2C_CR1_START;
+	I2C_Handler->I2C_periph->CR1 |= I2C_CR1_START;
 }
 
 void I2C_read(T_I2C_HANDLER* I2C_Handler, uint8_t slave_address, uint8_t reg_address, uint8_t data_len){
@@ -58,7 +58,7 @@ void I2C_read(T_I2C_HANDLER* I2C_Handler, uint8_t slave_address, uint8_t reg_add
 	I2C_Handler->transmit = 0;
 	I2C_Handler->restart = 0;
 	I2C_Handler->data_pointer = 0;
-	I2C1->CR1 |= I2C_CR1_START;
+	I2C_Handler->I2C_periph->CR1 |= I2C_CR1_START;
 }
 
 void I2C_Handler_Main(T_I2C_HANDLER* I2C_Handler){
@@ -197,11 +197,13 @@ void I2C_Handler_Main(T_I2C_HANDLER* I2C_Handler){
 	}
 
 	if(I2C_Handler->mode == 3){
-		static uint16_t aux16data[10];
+		static uint16_t aux16data[30];
 
 		if(old_mode != I2C_Handler->mode){ //first time
 			I2C_Handler->now_handled_device = 0;
 			I2C_Handler->now_handled_register = 0;
+
+			debug_uart_puts("snd");
 
 			uint8_t found = 0;
 			for(uint8_t i=I2C_Handler->now_handled_device; i<5; i++){
@@ -222,6 +224,7 @@ void I2C_Handler_Main(T_I2C_HANDLER* I2C_Handler){
 				if(I2C_Handler->devices[I2C_Handler->now_handled_device].is_16_bit == 1){
 					I2C_read(I2C_Handler, I2C_Handler->devices[I2C_Handler->now_handled_device].slave_address, I2C_Handler->devices[I2C_Handler->now_handled_device].read_start_reg, 2);
 				}else{
+					debug_uart_puts("?!");
 					I2C_read(I2C_Handler, I2C_Handler->devices[I2C_Handler->now_handled_device].slave_address, I2C_Handler->devices[I2C_Handler->now_handled_device].read_start_reg, I2C_Handler->devices[I2C_Handler->now_handled_device].read_cnt_reg);
 				}
 			}
@@ -263,7 +266,7 @@ void I2C_Handler_Main(T_I2C_HANDLER* I2C_Handler){
 
 				if(I2C_Handler->devices[I2C_Handler->now_handled_device].read_cnt_reg-1 == I2C_Handler->now_handled_register){
 
-					for(uint8_t i = 0; i<I2C_Handler->now_handled_register+1; i++){
+					for(uint8_t i = 0; i<I2C_Handler->devices[I2C_Handler->now_handled_device].read_cnt_reg+1; i++){
 						I2C_Handler->data[i] = aux16data[i];
 					}
 					I2C_Handler->devices[I2C_Handler->now_handled_device].read_data = 0;
@@ -304,6 +307,7 @@ void I2C_Handler_Main(T_I2C_HANDLER* I2C_Handler){
 		}
 		if(I2C_Handler->error_flag){		//nack
 			I2C_Handler->error_flag= 0;
+			I2C_Handler->mode = 0;
 			debug_uart_puts("error during readnig!!! \r\n");
 		}
 
@@ -312,42 +316,69 @@ void I2C_Handler_Main(T_I2C_HANDLER* I2C_Handler){
 	old_mode = I2C_Handler->mode;
 }
 
+void I2c_einit(){
+	I2C1->CR2 |= 0x20;							//freq of cpu
+	I2C1->CCR |= 0x80;
+
+	I2C1->CR2 |= I2C_CR2_ITEVTEN;				//enable interrupts status
+	I2C1->CR2 |= I2C_CR2_ITERREN;				//enable interrupts error
+	I2C1->CR2 |= I2C_CR2_ITBUFEN;				//enable interrupts buffer
+
+	I2C1->CR1 |= (I2C_CR1_PE);					//Peripheral enabled
+}
+
 void I2C_Handler_ERIRQ( T_I2C_HANDLER* I2C_Handler ){
 	if(I2C_Handler->I2C_periph->SR1 & I2C_SR1_AF){
 		I2C_Handler->I2C_periph->SR1 &= ~I2C_SR1_AF;
+		if(I2C_Handler->mode == 3){
+			I2C_Handler->I2C_periph->CR1 |= I2C_CR1_STOP;
+		}
+		debug_uart_puts("0\r\n");
 	}
 	if(I2C_Handler->I2C_periph->SR1 & I2C_SR1_BERR){
 		I2C_Handler->I2C_periph->SR1 &= ~I2C_SR1_BERR;
 		I2C_Handler->I2C_periph->CR1 |= I2C_CR1_SWRST;
 		I2C_Handler->I2C_periph->CR1 &= ~I2C_CR1_SWRST;
-		I2c_init();
+		I2c_einit();
+		debug_uart_puts("1\r\n");
 	}
 	if(I2C_Handler->I2C_periph->SR1 & I2C_SR1_ARLO){
 		I2C_Handler->I2C_periph->SR1 &= ~I2C_SR1_ARLO;
 		I2C_Handler->I2C_periph->CR1 |= I2C_CR1_SWRST;
 		I2C_Handler->I2C_periph->CR1 &= ~I2C_CR1_SWRST;
-		I2c_init();
+		I2c_einit();
+		debug_uart_puts("2\r\n");
 	}
 	if(I2C_Handler->I2C_periph->SR1 & I2C_SR1_OVR){
 		I2C_Handler->I2C_periph->SR1 &= ~I2C_SR1_OVR;
 		I2C_Handler->I2C_periph->CR1 |= I2C_CR1_SWRST;
 		I2C_Handler->I2C_periph->CR1 &= ~I2C_CR1_SWRST;
-		I2c_init();
+		I2c_einit();
+		debug_uart_puts("3\r\n");
 	}
 	if(I2C_Handler->I2C_periph->SR1 & I2C_SR1_PECERR){
 		I2C_Handler->I2C_periph->SR1 &= ~I2C_SR1_PECERR;
 		I2C_Handler->I2C_periph->CR1 |= I2C_CR1_SWRST;
 		I2C_Handler->I2C_periph->CR1 &= ~I2C_CR1_SWRST;
-		I2c_init();
+		I2c_einit();
+		debug_uart_puts("4\r\n");
 	}
 	I2C_Handler->error_flag = 1;
 }
 
+uint8_t bufforek[30];
+
 void I2C_Handler_EVIRQ( T_I2C_HANDLER* I2C_Handler ){
+//	static uint8_t i;
+//	debug_uart_putc(i+'0');
+//	if(i < 9) i++; else i = 0;
 	if(I2C_Handler->I2C_periph->SR1 & I2C_SR1_SB){
 		if(!I2C_Handler->restart) I2C_Handler->I2C_periph->DR = I2C_Handler->slave_address<<1;
 		else I2C_Handler->I2C_periph->DR = (I2C_Handler->slave_address<<1) + 1;
 	}
+
+	static char afg;
+	static char afg2;
 
 	if(I2C_Handler->I2C_periph->SR1 & I2C_SR1_ADDR){
 		uint32_t asd = I2C_Handler->I2C_periph->SR2;
@@ -358,6 +389,9 @@ void I2C_Handler_EVIRQ( T_I2C_HANDLER* I2C_Handler ){
 			}
 			I2C_Handler->I2C_periph->DR = I2C_Handler->data[0];
 		}else{
+
+			afg = I2C_Handler->data_len;
+			afg2 = 0;
 
 			if(I2C_Handler->data_len == 1 && I2C_Handler->restart == 1){
 				I2C_Handler->I2C_periph->CR1 &= ~I2C_CR1_ACK;
@@ -378,14 +412,22 @@ void I2C_Handler_EVIRQ( T_I2C_HANDLER* I2C_Handler ){
 		I2C_Handler->data[I2C_Handler->data_pointer]= I2C_Handler->I2C_periph->DR;
 		I2C_Handler->data_pointer++;
 
+		bufforek[I2C_Handler->data_pointer] = I2C_Handler->data_pointer;
+
+		GPIOC->ODR ^= GPIO_ODR_ODR8;
+
+		//debug_uart_putc(afg + '0');
+
 		if(I2C_Handler->data_len-1 == I2C_Handler->data_pointer){
 			I2C_Handler->I2C_periph->CR1 &= ~I2C_CR1_ACK;
 			I2C_Handler->I2C_periph->CR1 |= I2C_CR1_STOP;
-		}if(I2C_Handler->data_len == I2C_Handler->data_pointer){
+			bufforek[12] = I2C_Handler->data_len;
+		}else if(I2C_Handler->data_len == I2C_Handler->data_pointer){
 			I2C_Handler->rx_flag = 1;
 		}else{
 			I2C_Handler->I2C_periph->CR1 |= I2C_CR1_ACK;
 		}
+
 	}
 
 	if(I2C_Handler->I2C_periph->SR1 & I2C_SR1_TXE){

@@ -17,11 +17,13 @@ typedef struct T_I2C_DEVICE{
 	uint8_t read_cnt_reg;
 }T_I2C_DEVICE;
 
+extern uint8_t bufforek[30];
+
 //whole state machine variables/callbacks
 typedef struct T_I2C_HANDLER{
 
 	//low level used to generate frame: start, stop, restart, send byte, read byte
-	uint16_t* data;
+	uint16_t data[30];
 	uint8_t data_len;
 	uint8_t data_pointer;
 	uint8_t reg_address;
@@ -34,7 +36,6 @@ typedef struct T_I2C_HANDLER{
 	uint8_t rx_flag;
 	uint8_t error_flag;
 	uint8_t mode; //0=nothing 1=enumerate 2=write configuration
-
 	T_I2C_DEVICE* devices;
 	I2C_TypeDef* I2C_periph;
 
@@ -52,7 +53,9 @@ typedef struct T_I2C_HANDLER{
 
 	uint8_t read_start_reg;
 	uint8_t read_cnt_reg;
-	void (*i2c1_read_event_callback)(T_I2C_DEVICE* device, uint16_t * data);
+	void (*i2c1_read_event_callback)(T_I2C_DEVICE* device, uint16_t * _data);
+
+	void (*i2c1_error_event_callback)(T_I2C_DEVICE* device, uint16_t * _data);
 
 }T_I2C_HANDLER;
 
