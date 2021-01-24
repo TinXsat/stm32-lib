@@ -14,6 +14,8 @@
 
 #include "SX1278_hw.h"
 
+#include <Drivers/SPI_Handler/SPI_Handler.h>
+
 #define SX1278_MAX_PACKET	256
 #define SX1278_DEFAULT_TIMEOUT		3000
 
@@ -204,6 +206,11 @@ static const uint8_t SX1278_CodingRate[4] = { 0x01, 0x02, 0x03, 0x04 };
 #define SX1278_LORA_CRC_DIS             1
 
 static const uint8_t SX1278_CRC_Sum[2] = { 0x01, 0x00 };
+
+extern uint8_t buforek[30];
+extern T_SPI_COMMAND out_buf[15];
+extern T_SPI_COMMAND in_buf[15];
+extern T_SPI_HANDLER SPI2_Handler;
 
 typedef enum _SX1278_STATUS {
 	SLEEP, STANDBY, TX, RX
@@ -450,7 +457,8 @@ uint8_t SX1278_read(SX1278_t *module, uint8_t *rxBuf, uint8_t length);
  *
  * \return     RSSI value
  */
-uint8_t SX1278_RSSI_LoRa(SX1278_t *module);
+int SX1278_RSSI_LoRa(SX1278_t *module);
+int SX1278_SNR_LoRa(SX1278_t *module) ;
 
 /**
  * \brief Returns RSSI

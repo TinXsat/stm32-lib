@@ -9,6 +9,10 @@
 #include "SX1278.h"
 #include <string.h>
 
+#include <Drivers/SPI_Handler/SPI_Handler.h>
+
+uint8_t buforek[30];
+
 uint8_t SX1278_SPIRead(SX1278_t *module, uint8_t addr) {
 	uint8_t tmp;
 	SX1278_hw_SPICommand(module->hw, addr);
@@ -55,7 +59,9 @@ void SX1278_SPIBurstWrite(SX1278_t *module, uint8_t addr, uint8_t *txBuf,
 }
 
 void SX1278_config(SX1278_t *module) {
+
 	SX1278_sleep(module); //Change modem mode Must in Sleep mode
+
 	SX1278_hw_DelayMs(15);
 
 	SX1278_entryLoRa(module);
@@ -109,6 +115,8 @@ void SX1278_config(SX1278_t *module) {
 	SX1278_SPIWrite(module, LR_RegPreambleMsb, 0x00); //RegPreambleMsb
 	SX1278_SPIWrite(module, LR_RegPreambleLsb, 8); //RegPreambleLsb 8+4=12byte Preamble
 	SX1278_SPIWrite(module, REG_LR_DIOMAPPING2, 0x01); //RegDioMapping2 DIO5=00, DIO4=01
+
+
 	module->readBytes = 0;
 	SX1278_standby(module); //Entry standby mode
 }
@@ -161,6 +169,7 @@ int SX1278_LoRaEntryRx(SX1278_t *module, uint8_t length, uint32_t timeout) {
 		}
 		SX1278_hw_DelayMs(1);
 	}
+
 }
 
 uint8_t SX1278_LoRaRxPacket(SX1278_t *module) {
@@ -277,12 +286,22 @@ uint8_t SX1278_read(SX1278_t *module, uint8_t *rxBuf, uint8_t length) {
 	return length;
 }
 
-uint8_t SX1278_RSSI_LoRa(SX1278_t *module) {
+int SX1278_RSSI_LoRa(SX1278_t *module) {
 	uint32_t temp = 10;
-	temp = SX1278_SPIRead(module, LR_RegRssiValue); //Read RegRssiValue, Rssi value
-	temp = temp + 127 - 137; //127:Max RSSI, 137:RSSI offset
-	return (uint8_t) temp;
+	temp = SX1278_SPIRead(module, LR_RegPktRssiValue); //Read RegRssiValue, Rssi value
+	//temp = SX1278_SPIRead(module, LR_RegPktSnrValue);
+	int ret = temp -157; //127:Max RSSI, 137:RSSI offset
+	return (int) ret;
 }
+
+int SX1278_SNR_LoRa(SX1278_t *module) {
+	uint32_t temp = 10;
+	temp = SX1278_SPIRead(module, LR_RegPktSnrValue); //Read RegRssiValue, Rssi value
+	//temp = SX1278_SPIRead(module, LR_RegPktSnrValue);
+	int ret = temp; //127:Max RSSI, 137:RSSI offset
+	return (int) ret;
+}
+
 
 uint8_t SX1278_RSSI(SX1278_t *module) {
 	uint8_t temp = 0xff;
